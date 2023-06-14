@@ -1,0 +1,5 @@
+LIBRARY "hook"
+EXPORTS
+
+    install     @1
+    uninstall   @2
