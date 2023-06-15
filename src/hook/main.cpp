@@ -35,10 +35,25 @@
 #include <string>
 #include <Psapi.h>
 
-#include "detours.h"
-#include "SDK.hpp"
 #include "utils.hpp"
 
+#include "detours.h"
+#include "SDK.hpp"
+
+/**
+ * DEBUG_MODE
+ *
+ * Enables the debug mode features of hawkenject.
+ *
+ * When enabled, hawkenject will hook additional functions, that are not generally needed otherwise, for the purpose
+ * of debugging and other helpful information. Most of these features will output additional information to the
+ * systems debug stream. Use a tool such as DebugView or DbgView++ to view said information.
+ */
+#define DEBUG_MODE 1
+
+/**
+ * Detour Prototypes
+ */
 extern "C"
 {
     // Functions
@@ -58,6 +73,12 @@ extern "C"
     auto Real_PTR_GUseSeekFreePackageMap     = static_cast<uint32_t*>(nullptr);
     auto Real_PTR_UGameEngine                = static_cast<uint32_t*>(nullptr);
     auto Real_PTR_UPackage_NetObjectNotifies = static_cast<uint32_t*>(nullptr);
+
+#if defined(DEBUG_MODE) && (DEBUG_MODE == 1)
+    // Functions (Debugging)
+    auto Real_FAsyncPackage_CreateExports = static_cast<BOOL(__thiscall*)(int32_t)>(nullptr);
+    auto Real_ULinkerLoad_PreLoad         = static_cast<void(__thiscall*)(int32_t, int32_t)>(nullptr);
+#endif
 }
 
 /**
@@ -226,6 +247,67 @@ void __fastcall Mine_UWorld_SetGameInfo(int32_t world, int32_t pEdx, int32_t url
     __asm popad;
 }
 
+#if defined(DEBUG_MODE) && (DEBUG_MODE == 1)
+
+/**
+ * FAsyncPackage::CreateExports detour hook callback.
+ *
+ * @param {int32_t} package - The FAsyncPackage object used for this call.
+ * @param {int32_t} pEdx - The value of the EDX register. (ignored)
+ */
+BOOL __fastcall Mine_FAsyncPackage_CreateExports(int32_t package, int32_t pEdx)
+{
+    UNREFERENCED_PARAMETER(pEdx);
+
+    __asm pushad;
+    __asm pushfd;
+
+    const auto str = reinterpret_cast<Classes::FString*>(package + 0x04);
+    if (str && str->IsValid() && str->c_str()[0] != 0)
+        ::OutputDebugStringW(std::format(L"[FAsyncPackage::CreateExports] {}\n", str->c_str()).c_str());
+    else
+        ::OutputDebugStringW(L"[FAsyncPackage::CreateExports] (unknown)\n");
+
+    __asm popfd;
+    __asm popad;
+
+    return Real_FAsyncPackage_CreateExports(package);
+}
+
+/**
+ * ULinkerLoad::PreLoad detour hook callback.
+ *
+ * @param {int32_t} linker_load - The ULinkerLoad object used for this call.
+ * @param {int32_t} pEdx - The value of the EDX register. (ignored)
+ * @param {int32_t} obj - The UObject used for this call.
+ */
+void __fastcall Mine_ULinkerLoad_PreLoad(int32_t linker_load, int32_t pEdx, int32_t obj)
+{
+    UNREFERENCED_PARAMETER(pEdx);
+
+    __asm pushad;
+    __asm pushfd;
+
+    const auto o = reinterpret_cast<Classes::UObject*>(obj);
+    if (o == nullptr)
+        ::OutputDebugStringA(std::format("[ULinkerLoad::PreLoad] (null object)\n").c_str());
+    else
+    {
+        const auto name = Classes::FName::GNames->GetByIndex(o->Name.Index);
+        if (name && name->AnsiName[0] != 0)
+            ::OutputDebugStringA(std::format("[ULinkerLoad::PreLoad] {}\n", name->AnsiName).c_str());
+        else
+            ::OutputDebugStringA("[ULinkerLoad::PreLoad] (unknown object - invalid object name)\n");
+    }
+
+    __asm popfd;
+    __asm popad;
+
+    Real_ULinkerLoad_PreLoad(linker_load, obj);
+}
+
+#endif
+
 /**
  * Installs the hawkenject hook into the current process.
  *
@@ -280,6 +362,15 @@ __declspec(dllexport) BOOL __stdcall install(void)
     PTR_CHECK(Real_PTR_UGameEngine);
     PTR_CHECK(Real_PTR_UPackage_NetObjectNotifies);
 
+#if defined(DEBUG_MODE) && (DEBUG_MODE == 1)
+    // Update debug features..
+    Real_FAsyncPackage_CreateExports = atomic::memory::find<decltype(Real_FAsyncPackage_CreateExports)>(base, size, "558BEC83E4F883EC085355568BF18B46288B4E3C573B88", 0, 0);
+    Real_ULinkerLoad_PreLoad         = atomic::memory::find<decltype(Real_ULinkerLoad_PreLoad)>(base, size, "6AFF68????????64A1000000005083EC4053555657A1????????33C4508D44245464A3000000008BF98B74246433ED89", 0, 0);
+
+    PTR_CHECK(Real_FAsyncPackage_CreateExports);
+    PTR_CHECK(Real_ULinkerLoad_PreLoad);
+#endif
+
     // Update the SDK pointers..
     Classes::FName::GNames     = atomic::memory::find_ptr<decltype(Classes::FName::GNames)>(base, size, "8B0185C078??3B05????????7D??8B0D????????833C810074", 16, 0);
     Classes::UObject::GObjects = atomic::memory::find_ptr<decltype(Classes::UObject::GObjects)>(base, size, "8B44240485C078??3B05????????7D??8B0D????????8B0481C333C0C3", 18, 0);
@@ -299,6 +390,12 @@ __declspec(dllexport) BOOL __stdcall install(void)
     ::DetourTransactionBegin();
     ::DetourUpdateThread(::GetCurrentThread());
     ::DetourAttach(&(PVOID&)Real_UWorld_SetGameInfo, Mine_UWorld_SetGameInfo);
+
+#if defined(DEBUG_MODE) && (DEBUG_MODE == 1)
+    ::DetourAttach(&(PVOID&)Real_ULinkerLoad_PreLoad, Mine_ULinkerLoad_PreLoad);
+    ::DetourAttach(&(PVOID&)Real_FAsyncPackage_CreateExports, Mine_FAsyncPackage_CreateExports);
+#endif
+
     ::DetourTransactionCommit();
 
     return TRUE;
@@ -314,6 +411,12 @@ __declspec(dllexport) BOOL __stdcall uninstall(void)
     ::DetourTransactionBegin();
     ::DetourUpdateThread(::GetCurrentThread());
     ::DetourDetach(&(PVOID&)Real_UWorld_SetGameInfo, Mine_UWorld_SetGameInfo);
+
+#if defined(DEBUG_MODE) && (DEBUG_MODE == 1)
+    ::DetourDetach(&(PVOID&)Real_ULinkerLoad_PreLoad, Mine_ULinkerLoad_PreLoad);
+    ::DetourDetach(&(PVOID&)Real_FAsyncPackage_CreateExports, Mine_FAsyncPackage_CreateExports);
+#endif
+
     ::DetourTransactionCommit();
 
     return TRUE;
