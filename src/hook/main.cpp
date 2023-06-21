@@ -49,7 +49,7 @@
  * of debugging and other helpful information. Most of these features will output additional information to the
  * systems debug stream. Use a tool such as DebugView or DbgView++ to view said information.
  */
-#define DEBUG_MODE 1
+#define DEBUG_MODE 0
 
 /**
  * Detour Prototypes
@@ -78,7 +78,66 @@ extern "C"
     // Functions (Debugging)
     auto Real_FAsyncPackage_CreateExports = static_cast<BOOL(__thiscall*)(int32_t)>(nullptr);
     auto Real_ULinkerLoad_PreLoad         = static_cast<void(__thiscall*)(int32_t, int32_t)>(nullptr);
+    auto Real_UObject_LoadPackage         = static_cast<int32_t(__cdecl*)(int32_t, const wchar_t*, int32_t)>(nullptr);
 #endif
+}
+
+/**
+ * Helper function to properly call UPackage::NetObjectNotifies.AddItem(..)
+ *
+ * @param {auto} driver - The NetDriver object.
+ * @note
+ *
+ *      This call is used to implement a proper call for the following:
+ *
+ *          TArray<FNetObjectNotify*> UPackage::NetObjectNotifies;
+ *          UPackage::NetObjectNotifies.AddItem(NetDriver);
+ *
+ *      Due to how C++ class inheritance works, when the 'AddItem' call is made on this container,
+ *      it will automatically it will expect the object being passed to inherit from 'FNetObjectNotify'.
+ *
+ *      When this happens, the object pointer will be adjusted and aligned to where the 'FNetObjectNotify'
+ *      VTable begins within the parent object. Using raw pointers will not cause this to happen, thus we
+ *      need to reimplement this functionality ourselves for the time being.
+ *
+ * @todo: Eventually write out full proper implementations of the Unreal objects to not need this.
+ */
+void UPackage_NetObjectNotifies_AddItem(auto driver)
+{
+    int32_t temp = 0;
+
+    __asm
+    {
+        // Preserve flags and registers..
+        pushad;
+        pushfd;
+
+        // Ensure the driver is valid..
+        mov eax, driver;
+        cmp eax, 0;
+        jz null_driver;
+
+        // Adjust the driver offset to its 'FNetObjectNotify' VTable start..
+        add eax, 0x40;
+        mov [temp], eax;
+        jmp do_call;
+
+        // Driver was 0..
+null_driver:
+        mov [temp], 0;
+        jmp do_call;
+
+        // Call TArray<FNetObjectNotify*>::AddItem..
+do_call:
+        lea edx, [temp];
+        push edx;
+        mov ecx, [Real_PTR_UPackage_NetObjectNotifies];
+        call [Real_TArray_USeqAct_Latent_AddItem];
+
+        // Restore flags and registers..
+        popfd;
+        popad;
+    }
 }
 
 /**
@@ -192,12 +251,10 @@ BOOL __stdcall Mine_UWorld_Listen(const int32_t world, const int32_t url)
     if (!*Real_PTR_GUseSeekFreePackageMap)
     {
         Real_UPackageMap_AddNetPackages(*NetDriver_MasterMap);
-        Real_TArray_USeqAct_Latent_AddItem(reinterpret_cast<uint32_t>(Real_PTR_UPackage_NetObjectNotifies), reinterpret_cast<uint32_t>(NetDriver));
+        UPackage_NetObjectNotifies_AddItem(*NetDriver);
     }
     else
-    {
-        Real_TArray_USeqAct_Latent_AddItem(reinterpret_cast<uint32_t>(Real_PTR_UPackage_NetObjectNotifies), reinterpret_cast<uint32_t>(NetDriver));
-    }
+        UPackage_NetObjectNotifies_AddItem(*NetDriver);
 
     ////////////////////////////////////////////////////////////////////////////////////////////////////
     //
@@ -366,9 +423,11 @@ __declspec(dllexport) BOOL __stdcall install(void)
     // Update debug features..
     Real_FAsyncPackage_CreateExports = atomic::memory::find<decltype(Real_FAsyncPackage_CreateExports)>(base, size, "558BEC83E4F883EC085355568BF18B46288B4E3C573B88", 0, 0);
     Real_ULinkerLoad_PreLoad         = atomic::memory::find<decltype(Real_ULinkerLoad_PreLoad)>(base, size, "6AFF68????????64A1000000005083EC4053555657A1????????33C4508D44245464A3000000008BF98B74246433ED89", 0, 0);
+    Real_UObject_LoadPackage         = atomic::memory::find<decltype(Real_UObject_LoadPackage)>(base, size, "558BEC6AFF68????????64A1000000005083EC74A1????????33C58945EC535657", 0, 0);
 
     PTR_CHECK(Real_FAsyncPackage_CreateExports);
     PTR_CHECK(Real_ULinkerLoad_PreLoad);
+    PTR_CHECK(Real_UObject_LoadPackage);
 #endif
 
     // Update the SDK pointers..
