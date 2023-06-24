@@ -54,6 +54,7 @@ set(${ATOMIC_PROJECT_NAME_HOOK}_lib
 set(${ATOMIC_PROJECT_NAME_HOOK}_src
     "src/hook/exports.def"
     "src/hook/main.cpp"
+    "src/hook/objects.hpp"
     "src/hook/utils.hpp"
 
     # Unreal SDK
