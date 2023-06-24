@@ -373,6 +373,13 @@ void __fastcall Mine_ULinkerLoad_PreLoad(int32_t linker_load, int32_t pEdx, int3
 
 /**
  * FSocketWin::RecvFrom detour hook callback.
+ *
+ * @param {int32_t} socket - The socket to receive the data from.
+ * @param {int32_t} pEdx - The value of the EDX register. (ignored)
+ * @param {int32_t} data - The buffer to hold the read data.
+ * @param {int32_t} size - The size of the buffer.
+ * @param {int32_t} read - The output value to hold the amount of data read from the socket.
+ * @param {int32_t} src - The output value to hold the source address information.
  */
 int32_t __fastcall Mine_FSocketWin_RecvFrom(int32_t socket, int32_t pEdx, uint8_t* data, int32_t size, int32_t* read, struct sockaddr* src)
 {
