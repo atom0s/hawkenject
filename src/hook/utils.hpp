@@ -33,6 +33,9 @@
 
 #include <Windows.h>
 #include <algorithm>
+#include <iomanip>
+#include <iostream>
+#include <ostream>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -161,5 +164,66 @@ namespace atomic::memory
     }
 
 } // namespace atomic::memory
+
+namespace atomic::strings
+{
+    template<int32_t ElemsPerRow, bool AsciiDisplay>
+    struct hexdump_t
+    {
+        hexdump_t(const uint8_t* data, const std::size_t size)
+            : data_(data)
+            , size_(size)
+        {}
+
+        const uint8_t* data_;
+        const std::size_t size_;
+    };
+
+    template<int32_t ElemsPerRow, bool AsciiDisplay>
+    using hexdump = hexdump_t<ElemsPerRow, AsciiDisplay>;
+
+    template<int32_t ElemsPerRow, bool AsciiDisplay>
+    inline std::ostream& operator<<(std::ostream& out, const hexdump<ElemsPerRow, AsciiDisplay>& data)
+    {
+        out.fill('0');
+
+        for (std::size_t x = 0; x < data.size_; x += ElemsPerRow)
+        {
+            // Print the leading address..
+            out << "0x" << std::setw(8) << std::hex << x << ": ";
+
+            // Print the data bytes..
+            for (std::size_t y = 0; y < ElemsPerRow; ++y)
+            {
+                if (x + y < data.size_)
+                    out << std::hex << std::setw(2) << static_cast<uint32_t>(data.data_[x + y]) << " ";
+                else
+                    out << "   ";
+            }
+
+            // Print the ascii table..
+            if (AsciiDisplay)
+            {
+                out << " | ";
+
+                for (std::size_t y = 0; y < ElemsPerRow; ++y)
+                {
+                    if (x + y < data.size_)
+                    {
+                        if (std::isprint(data.data_[x + y]))
+                            out << static_cast<char>(data.data_[x + y]);
+                        else
+                            out << ".";
+                    }
+                }
+            }
+
+            out << std::endl;
+        }
+
+        return out;
+    }
+
+} // namespace atomic::strings
 
 #endif // UTILS_HPP
