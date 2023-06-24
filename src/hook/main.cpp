@@ -27,6 +27,10 @@
 #define NOMINMAX
 
 #pragma comment(lib, "Psapi.lib")
+#pragma comment(lib, "Ws2_32.lib")
+
+#include <WinSock2.h>
+#include <WS2tcpip.h>
 
 #include <Windows.h>
 #include <algorithm>
@@ -35,6 +39,7 @@
 #include <string>
 #include <Psapi.h>
 
+#include "objects.hpp"
 #include "utils.hpp"
 
 #include "detours.h"
@@ -62,7 +67,7 @@ extern "C"
     auto Real_UGameEngine_ConstructNetDriver = static_cast<int32_t(__thiscall*)(int32_t)>(nullptr);
     auto Real_UGameEngine_SpawnServerActors  = static_cast<void(__thiscall*)(int32_t)>(nullptr);
     auto Real_UNetDriver_InitListen          = static_cast<int32_t(__thiscall*)(int32_t, int32_t, int32_t, int32_t)>(nullptr);
-    auto Real_UTcpNetDriver_InitListen       = static_cast<int32_t(__thiscall*)(int32_t, int32_t, int32_t, int32_t)>(nullptr);
+    auto Real_UTcpNetDriver_InitListen       = static_cast<int32_t(__thiscall*)(int32_t, atomic::objects::FNetworkNotify*, int32_t, int32_t)>(nullptr);
     auto Real_UPackageMap_AddNetPackages     = static_cast<void(__thiscall*)(int32_t)>(nullptr);
     auto Real_UWorld_GetGameInfo             = static_cast<int32_t(__thiscall*)(int32_t)>(nullptr);
     auto Real_UWorld_SetGameInfo             = static_cast<void(__thiscall*)(int32_t, int32_t)>(nullptr);
@@ -79,6 +84,7 @@ extern "C"
     auto Real_FAsyncPackage_CreateExports = static_cast<BOOL(__thiscall*)(int32_t)>(nullptr);
     auto Real_ULinkerLoad_PreLoad         = static_cast<void(__thiscall*)(int32_t, int32_t)>(nullptr);
     auto Real_UObject_LoadPackage         = static_cast<int32_t(__cdecl*)(int32_t, const wchar_t*, int32_t)>(nullptr);
+    auto Real_FSocketWin_RecvFrom         = static_cast<int32_t(__thiscall*)(int32_t, uint8_t*, int32_t, int32_t*, struct sockaddr*)>(nullptr);
 #endif
 }
 
@@ -195,8 +201,10 @@ BOOL __stdcall Mine_UWorld_Listen(const int32_t world, const int32_t url)
     //
     ////////////////////////////////////////////////////////////////////////////////////////////////////
 
+    const auto cworld = reinterpret_cast<atomic::objects::UWorld*>(world);
+
     Classes::FString error;
-    if (!Real_UTcpNetDriver_InitListen(*NetDriver, world, url, reinterpret_cast<int32_t>(&error)))
+    if (!Real_UTcpNetDriver_InitListen(*NetDriver, cworld, url, reinterpret_cast<int32_t>(&error)))
     {
         *NetDriver = NULL;
         return FALSE;
@@ -363,6 +371,31 @@ void __fastcall Mine_ULinkerLoad_PreLoad(int32_t linker_load, int32_t pEdx, int3
     Real_ULinkerLoad_PreLoad(linker_load, obj);
 }
 
+/**
+ * FSocketWin::RecvFrom detour hook callback.
+ */
+int32_t __fastcall Mine_FSocketWin_RecvFrom(int32_t socket, int32_t pEdx, uint8_t* data, int32_t size, int32_t* read, struct sockaddr* src)
+{
+    UNREFERENCED_PARAMETER(pEdx);
+
+    const auto ret = Real_FSocketWin_RecvFrom(socket, data, size, read, src);
+    if (ret && read && *read > 0)
+    {
+        const auto sin = reinterpret_cast<const struct sockaddr_in*>(src);
+
+        char addr[INET_ADDRSTRLEN]{};
+        ::inet_ntop(AF_INET, reinterpret_cast<const void*>(&sin->sin_addr), addr, INET_ADDRSTRLEN);
+
+        std::stringstream ss;
+        ss << std::format("[FSocketWin::RecvFrom] Client: {}:{} | Size: {}", addr, ::htons(sin->sin_port), *read) << std::endl;
+        ss << atomic::strings::hexdump<16, true>(data, *read) << std::endl;
+
+        ::OutputDebugStringA(ss.str().c_str());
+    }
+
+    return ret;
+}
+
 #endif
 
 /**
@@ -424,10 +457,12 @@ __declspec(dllexport) BOOL __stdcall install(void)
     Real_FAsyncPackage_CreateExports = atomic::memory::find<decltype(Real_FAsyncPackage_CreateExports)>(base, size, "558BEC83E4F883EC085355568BF18B46288B4E3C573B88", 0, 0);
     Real_ULinkerLoad_PreLoad         = atomic::memory::find<decltype(Real_ULinkerLoad_PreLoad)>(base, size, "6AFF68????????64A1000000005083EC4053555657A1????????33C4508D44245464A3000000008BF98B74246433ED89", 0, 0);
     Real_UObject_LoadPackage         = atomic::memory::find<decltype(Real_UObject_LoadPackage)>(base, size, "558BEC6AFF68????????64A1000000005083EC74A1????????33C58945EC535657", 0, 0);
+    Real_FSocketWin_RecvFrom         = atomic::memory::find<decltype(Real_FSocketWin_RecvFrom)>(base, size, "51538B5C2418558B6C241056578D44241050538BF18B4C24248B56146A005155", 0, 0);
 
     PTR_CHECK(Real_FAsyncPackage_CreateExports);
     PTR_CHECK(Real_ULinkerLoad_PreLoad);
     PTR_CHECK(Real_UObject_LoadPackage);
+    PTR_CHECK(Real_FSocketWin_RecvFrom);
 #endif
 
     // Update the SDK pointers..
@@ -453,6 +488,7 @@ __declspec(dllexport) BOOL __stdcall install(void)
 #if defined(DEBUG_MODE) && (DEBUG_MODE == 1)
     ::DetourAttach(&(PVOID&)Real_ULinkerLoad_PreLoad, Mine_ULinkerLoad_PreLoad);
     ::DetourAttach(&(PVOID&)Real_FAsyncPackage_CreateExports, Mine_FAsyncPackage_CreateExports);
+    ::DetourAttach(&(PVOID&)Real_FSocketWin_RecvFrom, Mine_FSocketWin_RecvFrom);
 #endif
 
     ::DetourTransactionCommit();
@@ -474,6 +510,7 @@ __declspec(dllexport) BOOL __stdcall uninstall(void)
 #if defined(DEBUG_MODE) && (DEBUG_MODE == 1)
     ::DetourDetach(&(PVOID&)Real_ULinkerLoad_PreLoad, Mine_ULinkerLoad_PreLoad);
     ::DetourDetach(&(PVOID&)Real_FAsyncPackage_CreateExports, Mine_FAsyncPackage_CreateExports);
+    ::DetourDetach(&(PVOID&)Real_FSocketWin_RecvFrom, Mine_FSocketWin_RecvFrom);
 #endif
 
     ::DetourTransactionCommit();
