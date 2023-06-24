@@ -64,8 +64,8 @@ IDI_ICON                ICON                    "hawkenject.ico"
 //
 
 VS_VERSION_INFO VERSIONINFO
- FILEVERSION 1,0,0,2
- PRODUCTVERSION 1,0,0,2
+ FILEVERSION 1,0,0,3
+ PRODUCTVERSION 1,0,0,3
  FILEFLAGSMASK 0x3fL
 #ifdef _DEBUG
  FILEFLAGS 0x1L
@@ -82,12 +82,12 @@ BEGIN
         BEGIN
             VALUE "CompanyName", "hawkenject by atom0s"
             VALUE "FileDescription", "Hawken Dedicated Server Hook"
-            VALUE "FileVersion", "1.0.0.2"
+            VALUE "FileVersion", "1.0.0.3"
             VALUE "InternalName", "hook.dll"
             VALUE "LegalCopyright", "Copyright (c) 2023 atom0s"
             VALUE "OriginalFilename", "hook.dll"
             VALUE "ProductName", "hawkenject"
-            VALUE "ProductVersion", "1.0.0.2"
+            VALUE "ProductVersion", "1.0.0.3"
         END
     END
     BLOCK "VarFileInfo"
